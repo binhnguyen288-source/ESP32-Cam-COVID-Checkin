@@ -12,50 +12,124 @@
         <div class="container pt-4">
             <h1 class="text-center">ESP32-Cam COVID Check-in</h1>
             Welcome to the covid check-in website of Group 3, Electrical-electronic course, HK211, you can connect to your ESP32-Cam and start creating your check-in facility for cheap!
-            
-            <div class="vstack gap-3">
-                <hr>
-                <h2>Enter your server</h2>
-                <div class="hstack gap-2">
+            <h2>Enter your server</h2>
+            <div class="hstack gap-2">
                 <input class="form-control" id="server_id" placeholder="Enter your ESP32-Cam streaming IP address">
-                <button class="btn btn-secondary" id="server_change">Change server</button>
-                </div>
-                <hr>
-                <h2 id="recog">Camera</h2>
-                <canvas id="canvas"></canvas>
-                <div class="hstack gap-2">
-                    <input class="form-control" id="name" placeholder="Enter your ID here">
-                    <button class="btn btn-primary" id="addFace">Add face</button>
-                </div>
-                
+                <button class="btn btn-secondary" id="server_change">Connect</button>
             </div>
-        </div>
+            <hr>
+            <div class="hstack gap-2">
+                <div class="vstack gap-3">
+                    <h2 id="recog">Camera</h2>
+                    <canvas id="canvas" width=640 height=480></canvas>
+                    <div class="hstack gap-2">
+                        <input class="form-control" id="name" placeholder="Enter your ID here">
+                        <button class="btn btn-primary" id="addFace">Add</button>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="face-rec">
+                            <label class="form-check-label" for="flexSwitchCheckDefault">Face</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="vr"></div>
+                <div class="vstack gap-3">
+                    <h2>Check-in result</h2>
+                    <button class="btn btn-primary" id="export">Export</button>
+                    <table class="table">
+                        <thead>
+                            <tr>
+                            <th scope="col">#</th>
+                            <th scope="col">Name</th>
+                            <th scope="col">ID</th>
+                            <th scope="col">Vaccine type</th>
+                            </tr>
+                        </thead>
+                        <tbody id="output_rows">
+                        </tbody>
+                    </table>
+                    
+                </div>
+            </div>
+    </div>
 
         <script>
-            const width = 800;
-            const height = 600;
+            const width = 1600;
+            const height = 1200;
             const addFaceBtn = document.getElementById('addFace');
             const changeServerBtn = document.getElementById('server_change');
-            const canvas = document.getElementById('canvas');
+            const show_canvas = document.getElementById('canvas');
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const show_ctx = show_canvas.getContext('2d');
             const ctx = canvas.getContext('2d');
             const name = document.getElementById('name');
             const list_names = [];
+            const camera = document.getElementById('recog');
+            const face_switch = document.getElementById('face-rec');
 
             
-            canvas.width = width;
-            canvas.height = height;
+            let counter = 1;
+            const check_in_entries = [];
+            document.getElementById('export').onclick = () => {
+                download(check_in_entries.join('\n'));
+            }
+            
+            function download(text) {
+                var element = document.createElement('a');
+                element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent('Date,Time,Name,ID,Vaccine type\n' + text));
+                element.setAttribute('download', 'output.csv');
 
+                element.style.display = 'none';
+                document.body.appendChild(element);
+
+                element.click();
+
+                document.body.removeChild(element);
+            }
+            function addToTable(json) {
+                const rows = document.getElementById("output_rows");
+                const row = document.createElement('tr');
+                
+                const stt = document.createElement('td');
+                stt.innerText = counter++;
+                row.appendChild(stt);
+
+                const fullname = document.createElement('td');
+                fullname.innerText = json.ho_ten;
+                row.appendChild(fullname);
+
+                const cmnd = document.createElement('td');
+                let so_cmnd = json.nguoidan.ma_cong_dan;
+
+                cmnd.innerText = so_cmnd.slice(0, 7) + '*****';
+                
+                row.appendChild(cmnd);
+
+                const ten_vacxin = document.createElement('td');
+                ten_vacxin.innerText = json.ten_vacxin;
+                row.appendChild(ten_vacxin);
+                
+                rows.append(row);
+                check_in_entries.push([new Date().toLocaleString(), json.ho_ten, so_cmnd, json.ten_vacxin].join(','));
+
+
+                
+            } 
 
             Module.onRuntimeInitialized = () => {
 
                 let cmnd = null;
                 let fetching = false;
-                let count_pass = 5;
-                let add_face = false;
+                let count_pass = 0;
+                let add_face = 0;
+                let last = null;
+                let last_cmnd = null;
 
                 let currentInterval = null;
 
                 changeServerBtn.onclick = () => {
+                     
                     if (currentInterval) {
                         clearInterval(currentInterval);
                         currentInterval = null;
@@ -65,11 +139,16 @@
                     img.crossOrigin = "anonymous";
                     img.src = document.getElementById('server_id').value;
 
+                    
+
 
                     img.onload = () => {
                         addFaceBtn.onclick = () => {
-                            add_face = true;
-                            list_names[name.value] = list_names.length;
+                            if (face_switch.checked) {
+                                add_face = 1;
+                                Module.ccall('setAddFace', 'number', ['number'], [1]);
+                                list_names.push(name.value);
+                            }
                         }
                         const bufPtr = Module.ccall('getPtr', 'number', [], null);
                         
@@ -78,15 +157,22 @@
                             ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, width, height);
                             const rawData = ctx.getImageData(0, 0, width, height).data;
                             Module.HEAP8.set(rawData, bufPtr);
-                            if (add_face) {
-                                Module.ccall('faceDetect', 'number', ['number'], [1]);
-                                add_face = false;
+                            if (add_face === 1) {
+                                add_face = 2;
+                                const res = Module.ccall('faceDetect', 'number', [], null);
+                                if (res === -2) {
+                                    add_face = 0;
+                                    camera.innerText = `Camera: Added face ${name.value} successfully`;
+                                }
+                                else {
+                                    add_face = 1;
+                                }
                                 const dataView = new Uint8ClampedArray(Module.HEAP8.buffer, bufPtr, 4 * width * height);
                                 ctx.putImageData(new ImageData(dataView, width, height), 0, 0);
                             }
                             else if (!cmnd) {
                                 if (!fetching) {
-                                    const output = Module.ccall('readCode', 'string', [], []);
+                                    const output = Module.ccall('readCode', 'string', [], null);
                                     const data_line = output.split('\n')[1].split(' ');
                                     if (data_line[0] === 'Data:' && data_line[1].startsWith("https://kbyt.khambenh.gov.vn/#lichsu_tiemchung/model?id=")) {
                                         const id = data_line[1].split('=')[1];
@@ -94,8 +180,13 @@
                                             fetching = true;
                                             const response = await fetch(`https://kbyt.khambenh.gov.vn/api/v1/lichsu_tiemchung/${id}`);
                                             const json = await response.json();
-                                            cmnd = json.nguoidan.ma_cong_dan;
+                                            if (!last || Date.now() - last > 15000 || json.nguoidan.ma_cong_dan !== last_cmnd) 
+                                                addToTable(json);
+                                            last = Date.now();
+                                            last_cmnd = json.nguoidan.ma_cong_dan;
+                                            if (face_switch.checked) cmnd = json.ho_ten;
                                             fetching = false;
+                                            count_pass = 5;
                                         }
                                         catch (e) {
                                             cmnd = null;
@@ -105,11 +196,24 @@
                                 }
                             }
                             else {
+                                
                                 const resid = Module.ccall('faceDetect', 'number', ['number'], [0]);
+                                if (resid === -1 || list_names[resid] !== cmnd) {
+                                    camera.innerText = `Camera: ALERT, NOT MATCH!`;
+                                }
+                                else {
+                                    camera.innerText = `Camera: OK, ${list_names[resid]}`;
+                                    --count_pass;
+                                }
+                                
                                 const dataView = new Uint8ClampedArray(Module.HEAP8.buffer, bufPtr, 4 * width * height);
                                 ctx.putImageData(new ImageData(dataView, width, height), 0, 0);
-                                reading_qr = false;
+                                if (count_pass < 0) {
+                                    camera.innerText = 'Camera';
+                                    cmnd = null;
+                                }
                             }
+                            show_ctx.drawImage(canvas, 0, 0, show_canvas.width, show_canvas.height);
                         }
                         currentInterval = setInterval(loop, 34);
                     }
